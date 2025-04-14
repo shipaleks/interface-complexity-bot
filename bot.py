@@ -115,7 +115,7 @@ async def analyze(update: Update, context: ContextTypes.DEFAULT_TYPE):
         }
     })
     response = openai.ChatCompletion.create(
-        model="gpt-4o",  # or "gpt-4.1" if that's the exact name
+        model="gpt-4.1",
         response_format="json",
         messages=[
             {"role": "system", "content": prompt},
