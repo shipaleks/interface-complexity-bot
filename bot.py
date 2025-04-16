@@ -15,6 +15,10 @@ load_dotenv()
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 FIREBASE_CRED_PATH = os.getenv("FIREBASE_CRED_PATH")
+PORT = int(os.environ.get('PORT', 8443))
+RAILWAY_STATIC_URL = os.environ.get('RAILWAY_STATIC_URL', None)
+# Check if running in production environment
+IS_PRODUCTION = bool(RAILWAY_STATIC_URL)
 
 # Setup logging
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
@@ -114,6 +118,10 @@ async def analyze(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "url": f"data:image/jpeg;base64,{base64_image}"
         }
     })
+    
+    # Send a typing indicator to show the bot is processing
+    await update.message.chat.send_action(action="typing")
+    
     response = openai.ChatCompletion.create(
         model="gpt-4.1",
         response_format="json",
@@ -161,7 +169,21 @@ def main():
     )
     app.add_handler(conv_handler)
     app.add_handler(CommandHandler("help", help_command))
-    app.run_polling()
+    
+    # Use webhooks in production, polling in development
+    if IS_PRODUCTION:
+        # Set webhook for production environment
+        logging.info(f"Starting webhook on {RAILWAY_STATIC_URL}")
+        app.run_webhook(
+            listen="0.0.0.0",
+            port=PORT,
+            url_path=TELEGRAM_TOKEN,
+            webhook_url=f"{RAILWAY_STATIC_URL}/{TELEGRAM_TOKEN}"
+        )
+    else:
+        # Use polling for development
+        logging.info("Starting polling")
+        app.run_polling()
 
 if __name__ == "__main__":
     main()
