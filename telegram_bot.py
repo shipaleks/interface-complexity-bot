@@ -95,6 +95,46 @@ async def cmd_cancel(message: Message, state: FSMContext):
     await state.clear()
     await message.answer("Анализ отменен. Отправьте скриншот, чтобы начать снова.")
 
+@router.message(Command("debug"))
+async def cmd_debug(message: Message, state: FSMContext):
+    """Debug command to check bot status."""
+    logger.info(f"Debug command received from user {message.from_user.id}")
+    
+    # Get current state
+    current_state = await state.get_state()
+    
+    # Get current FSM data
+    data = await state.get_data()
+    
+    # Check directories
+    temp_exists = os.path.exists("temp")
+    results_exists = os.path.exists("results")
+    
+    # Test file creation
+    test_file_path = "temp/debug_test.txt"
+    file_write_ok = False
+    try:
+        with open(test_file_path, "w") as f:
+            f.write("Debug test")
+        file_write_ok = True
+        os.remove(test_file_path)
+    except Exception as e:
+        logger.error(f"File write test failed: {e}")
+    
+    # Prepare debug info
+    debug_info = (
+        f"🔍 <b>Информация о состоянии бота:</b>\n\n"
+        f"<b>Текущее состояние:</b> {current_state}\n"
+        f"<b>Данные в FSM:</b> {list(data.keys()) if data else 'пусто'}\n\n"
+        f"<b>Директории:</b>\n"
+        f"- /temp: {'существует' if temp_exists else 'не существует'}\n"
+        f"- /results: {'существует' if results_exists else 'не существует'}\n\n"
+        f"<b>Тест записи файла:</b> {'успешно' if file_write_ok else 'ошибка'}\n\n"
+        f"<b>Версия бота:</b> Railway Deploy v1.0\n"
+    )
+    
+    await message.answer(debug_info, parse_mode="HTML")
+
 # Message handlers
 @router.message(F.photo)
 async def handle_photo(message: Message, state: FSMContext):
@@ -157,7 +197,7 @@ async def handle_photo(message: Message, state: FSMContext):
         # Clear state on error
         await state.clear()
 
-@router.message(AnalysisStates.waiting_for_context)
+@router.message(AnalysisStates.waiting_for_context, F.text)
 async def handle_context(message: Message, state: FSMContext):
     """Handle context description from user."""
     try:
@@ -189,7 +229,7 @@ async def handle_context(message: Message, state: FSMContext):
         await message.answer(f"Произошла ошибка при обработке контекста: {str(e)}")
         # Don't clear state, allow retry
 
-@router.message(AnalysisStates.waiting_for_userflows)
+@router.message(AnalysisStates.waiting_for_userflows, F.text)
 async def handle_userflows(message: Message, state: FSMContext):
     """Handle user flows description from user and start analysis."""
     try:
@@ -550,7 +590,13 @@ async def handle_text(message: Message, state: FSMContext):
             "Пожалуйста, отправьте скриншот интерфейса для анализа.\n"
             "Используйте /help, чтобы узнать больше о возможностях бота."
         )
-        return
+    else:
+        # Unexpected text message in a state
+        await message.answer(
+            "Извините, я не понимаю этого сообщения в текущем контексте. "
+            "Пожалуйста, следуйте инструкциям или используйте /cancel для отмены."
+        )
+        logger.warning(f"Unhandled text message in state {current_state}: {message.text[:30]}...")
 
 # Register the router
 dp.include_router(router)
@@ -560,14 +606,6 @@ async def main():
         # Skip pending updates
         logger.info("Starting bot, deleting previous webhook updates...")
         await bot.delete_webhook(drop_pending_updates=True)
-        
-        # Register all states
-        logger.info("Registering FSM states...")
-        AnalysisStates.waiting_for_screenshot.update(AnalysisStates)
-        AnalysisStates.waiting_for_context.update(AnalysisStates)
-        AnalysisStates.waiting_for_userflows.update(AnalysisStates)
-        AnalysisStates.analyzing.update(AnalysisStates)
-        logger.info("FSM states registered")
         
         # Start polling
         logger.info("Starting polling...")
