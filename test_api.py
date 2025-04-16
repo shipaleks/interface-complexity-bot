@@ -79,7 +79,7 @@ def test_gemini_api():
         genai.configure(api_key=api_key)
         
         # List models (simple API call to test connection)
-        models = genai.list_models()
+        models = list(genai.list_models())  # Convert generator to list
         
         # Print available models for confirmation
         logger.info(f"Gemini connection successful. Found {len(models)} models.")

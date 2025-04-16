@@ -21,6 +21,8 @@ import aiohttp
 import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
+from telegram import Update
+from telegram.ext import ContextTypes
 
 # Add parent directory to path to import from the main project
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
@@ -448,92 +450,109 @@ class UIAnalyzer:
             }
             
             logger.info("Sending request to Gemini API")
-            async with aiohttp.ClientSession() as session:
-                async with session.post(
-                    f"https://generativelanguage.googleapis.com/v1beta/models/gemini-pro-vision:generateContent?key={GEMINI_API_KEY}",
-                    headers=headers,
-                    json=payload
-                ) as response:
-                    logger.info(f"Gemini API response status: {response.status}")
-                    response_data = await response.json()
-                    
-                    if response.status != 200:
-                        error_msg = response_data.get("error", {}).get("message", "Unknown error")
-                        logger.error(f"Gemini API error: {error_msg}")
-                        logger.error(f"Full error response: {response_data}")
-                        raise Exception(f"Gemini API error: {error_msg}")
-                    
-                    # Extract the response content
-                    logger.info("Processing Gemini API response")
-                    response_text = response_data.get("candidates", [{}])[0].get("content", {}).get("parts", [{}])[0].get("text", "")
-                    logger.info(f"Response text length: {len(response_text)}")
-                    logger.debug(f"Response text: {response_text}")
-                    
-                    # Parse coordinates from the response
-                    coordinates = []
-                    lines = response_text.strip().split('\n')
-                    
-                    for line in lines:
-                        if ':' in line and '[' in line and ']' in line:
-                            try:
-                                # Extract problem index and coordinates
-                                parts = line.split(':')
-                                if len(parts) < 2:
-                                    continue
-                                    
-                                problem_idx_str = parts[0].strip().rstrip('.')
-                                coords_str = parts[1].strip()
-                                
-                                # Try to get problem index
+            try:
+                # Добавляем более подробное логирование запроса
+                logger.info(f"Gemini API URL: https://generativelanguage.googleapis.com/v1beta/models/gemini-pro-vision:generateContent?key=<API_KEY>")
+                logger.info(f"Gemini request payload size: {len(str(payload))} characters")
+                
+                async with aiohttp.ClientSession() as session:
+                    async with session.post(
+                        f"https://generativelanguage.googleapis.com/v1beta/models/gemini-pro-vision:generateContent?key={GEMINI_API_KEY}",
+                        headers=headers,
+                        json=payload,
+                        timeout=120  # Увеличиваем таймаут до 2 минут
+                    ) as response:
+                        logger.info(f"Gemini API response status: {response.status}")
+                        response_text = await response.text()
+                        logger.info(f"Gemini raw response length: {len(response_text)} characters")
+                        
+                        try:
+                            response_data = json.loads(response_text)
+                        except json.JSONDecodeError as json_err:
+                            logger.error(f"Failed to parse Gemini response as JSON: {json_err}")
+                            logger.error(f"Response text: {response_text[:500]}...")  # Логируем первые 500 символов
+                            raise Exception(f"Invalid JSON response from Gemini API: {json_err}")
+                        
+                        if response.status != 200:
+                            error_msg = response_data.get("error", {}).get("message", "Unknown error")
+                            logger.error(f"Gemini API error: {error_msg}")
+                            logger.error(f"Full error response: {response_data}")
+                            raise Exception(f"Gemini API error: {error_msg}")
+                        
+                        # Extract the response content
+                        logger.info("Processing Gemini API response")
+                        response_text = response_data.get("candidates", [{}])[0].get("content", {}).get("parts", [{}])[0].get("text", "")
+                        logger.info(f"Response text length: {len(response_text)}")
+                        logger.debug(f"Response text sample: {response_text[:200]}...")  # Логируем первые 200 символов
+                        
+                        # Parse coordinates from the response
+                        coordinates = []
+                        lines = response_text.strip().split('\n')
+                        
+                        for line in lines:
+                            if ':' in line and '[' in line and ']' in line:
                                 try:
-                                    problem_idx = int(problem_idx_str) - 1  # Convert to 0-based index
-                                    if problem_idx < 0 or problem_idx >= len(top_problems):
+                                    # Extract problem index and coordinates
+                                    parts = line.split(':')
+                                    if len(parts) < 2:
                                         continue
                                         
-                                    problem = top_problems[problem_idx]
-                                except ValueError:
-                                    continue
-                                
-                                # Extract coordinates
-                                coords_match = coords_str.split('[')[1].split(']')[0]
-                                coords_values = [int(x.strip()) for x in coords_match.split(',')]
-                                
-                                if len(coords_values) == 4:
-                                    # Ensure coordinates are within image bounds
-                                    x1 = max(0, min(coords_values[0], width))
-                                    y1 = max(0, min(coords_values[1], height))
-                                    x2 = max(0, min(coords_values[2], width))
-                                    y2 = max(0, min(coords_values[3], height))
+                                    problem_idx_str = parts[0].strip().rstrip('.')
+                                    coords_str = parts[1].strip()
                                     
-                                    coordinates.append({
-                                        "problem": problem,
-                                        "coordinates": [x1, y1, x2, y2]
-                                    })
-                            except Exception as e:
-                                logger.warning(f"Error parsing coordinate line '{line}': {e}")
-                    
-                    logger.info(f"Extracted {len(coordinates)} coordinates from response")
-                    
-                    # Create results dictionary
-                    coordinates_data = {
-                        "image_dimensions": {"width": width, "height": height},
-                        "coordinates": coordinates
-                    }
-                    
-                    # Save to file if output path is provided
-                    if output_path:
-                        try:
-                            output_dir = os.path.dirname(output_path)
-                            if output_dir:
-                                os.makedirs(output_dir, exist_ok=True)
-                                
-                            with open(output_path, "w", encoding="utf-8") as f:
-                                json.dump(coordinates_data, f, indent=2)
-                            logger.info(f"Coordinates data saved to: {output_path}")
-                        except Exception as save_error:
-                            logger.error(f"Error saving coordinates data: {save_error}")
-                    
-                    return coordinates_data
+                                    # Try to get problem index
+                                    try:
+                                        problem_idx = int(problem_idx_str) - 1  # Convert to 0-based index
+                                        if problem_idx < 0 or problem_idx >= len(top_problems):
+                                            continue
+                                            
+                                        problem = top_problems[problem_idx]
+                                    except ValueError:
+                                        continue
+                                    
+                                    # Extract coordinates
+                                    coords_match = coords_str.split('[')[1].split(']')[0]
+                                    coords_values = [int(x.strip()) for x in coords_match.split(',')]
+                                    
+                                    if len(coords_values) == 4:
+                                        # Ensure coordinates are within image bounds
+                                        x1 = max(0, min(coords_values[0], width))
+                                        y1 = max(0, min(coords_values[1], height))
+                                        x2 = max(0, min(coords_values[2], width))
+                                        y2 = max(0, min(coords_values[3], height))
+                                        
+                                        coordinates.append({
+                                            "problem": problem,
+                                            "coordinates": [x1, y1, x2, y2]
+                                        })
+                                except Exception as e:
+                                    logger.warning(f"Error parsing coordinate line '{line}': {e}")
+                        
+                        logger.info(f"Extracted {len(coordinates)} coordinates from response")
+                        
+                        # Create results dictionary
+                        coordinates_data = {
+                            "image_dimensions": {"width": width, "height": height},
+                            "coordinates": coordinates
+                        }
+                        
+                        # Save to file if output path is provided
+                        if output_path:
+                            try:
+                                output_dir = os.path.dirname(output_path)
+                                if output_dir:
+                                    os.makedirs(output_dir, exist_ok=True)
+                                    
+                                with open(output_path, "w", encoding="utf-8") as f:
+                                    json.dump(coordinates_data, f, indent=2)
+                                logger.info(f"Coordinates data saved to: {output_path}")
+                            except Exception as save_error:
+                                logger.error(f"Error saving coordinates data: {save_error}")
+                        
+                        return coordinates_data
+            except aiohttp.ClientError as client_error:
+                logger.error(f"Gemini API request failed: {client_error}")
+                raise Exception(f"Failed to connect to Gemini API: {client_error}")
                     
         except Exception as e:
             logger.error(f"Error in coordinate extraction: {e}")
@@ -895,4 +914,129 @@ if __name__ == "__main__":
             print(f"Error during analysis: {e}")
             traceback.print_exc()
     
-    asyncio.run(main()) 
+    asyncio.run(main())
+
+async def process_screenshot(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Process a screenshot sent by the user."""
+    logger.info("PHOTO HANDLER CALLED - Starting to process photo")
+    
+    # Логируем детальную информацию о сообщении
+    try:
+        logger.info(f"Message from user: {update.effective_user.id}, username: {update.effective_user.username}")
+        logger.info(f"Message contains photo: {bool(update.message.photo)}")
+        logger.info(f"Message type: {type(update.message)}")
+        if hasattr(update.message, 'photo'):
+            logger.info(f"Photo details: {update.message.photo}")
+        
+        if not update.message or not update.message.photo or len(update.message.photo) == 0:
+            logger.error("No photos found in the message")
+            await update.message.reply_text("No photos found in your message. Please send a screenshot image.")
+            return
+    except Exception as e:
+        logger.error(f"Error checking message content: {e}")
+        logger.error(traceback.format_exc())
+        try:
+            await update.message.reply_text("Error processing your message. Please try again.")
+        except:
+            pass
+        return
+    
+    user_id = update.effective_user.id
+    logger.info(f"Processing screenshot from user {user_id}")
+    
+    # Send processing message
+    processing_message = None
+    try:
+        processing_message = await update.message.reply_text(
+            "🔍 Processing your screenshot. This will take about 1-2 minutes..."
+        )
+        logger.info("Sent initial processing message")
+        
+        # Get the photo with the highest resolution
+        if not update.message.photo:
+            logger.error("No photos found in the message")
+            await update.message.reply_text("No photos found in your message. Please send a screenshot image.")
+            return
+            
+        photo = update.message.photo[-1]
+        logger.info(f"Photo details: file_id={photo.file_id}, width={photo.width}, height={photo.height}")
+        
+        # Create a temporary directory for this user
+        temp_dir = tempfile.mkdtemp()
+        logger.info(f"Created temp directory: {temp_dir}")
+        
+        try:
+            # Download the photo
+            logger.info("Starting photo download")
+            try:
+                photo_file = await context.bot.get_file(photo.file_id)
+                logger.info(f"Got file info: {photo_file}")
+                screenshot_path = os.path.join(temp_dir, f"screenshot_{photo.file_id}.jpg")
+                await photo_file.download_to_drive(screenshot_path)
+                logger.info(f"Photo downloaded to: {screenshot_path}")
+                
+                # Check if file exists and has content
+                if os.path.exists(screenshot_path):
+                    file_size = os.path.getsize(screenshot_path)
+                    logger.info(f"Downloaded file size: {file_size} bytes")
+                    if file_size == 0:
+                        logger.error("Downloaded file is empty")
+                        raise ValueError("Downloaded file is empty")
+                else:
+                    logger.error(f"Downloaded file doesn't exist: {screenshot_path}")
+                    raise FileNotFoundError(f"Downloaded file not found: {screenshot_path}")
+            except Exception as download_error:
+                logger.error(f"Error downloading photo: {download_error}")
+                logger.error(traceback.format_exc())
+                if processing_message:
+                    await processing_message.edit_text(
+                        "❌ Error downloading your image. Please try again."
+                    )
+                return
+            
+            # Store the screenshot path in user context
+            if user_id not in user_context:
+                user_context[user_id] = {}
+            user_context[user_id]['screenshot_path'] = screenshot_path
+            
+            # Update processing message
+            await processing_message.edit_text(
+                "🔎 Analyzing your interface for complexity issues and usability problems..."
+            )
+            logger.info("Processing message updated for analysis")
+            
+            # Start analysis in a separate task to prevent blocking
+            asyncio.create_task(perform_analysis(update, context, screenshot_path, processing_message))
+            logger.info("Analysis task created")
+            
+        except Exception as e:
+            logger.error(f"Error processing screenshot: {e}")
+            logger.error(traceback.format_exc())
+            if os.path.exists(temp_dir):
+                try:
+                    import shutil
+                    shutil.rmtree(temp_dir)
+                    logger.info(f"Cleaned up temp directory: {temp_dir}")
+                except Exception as cleanup_error:
+                    logger.error(f"Error cleaning up temp directory: {cleanup_error}")
+            
+            if processing_message:
+                await processing_message.edit_text(
+                    "❌ Sorry, an error occurred while processing your screenshot. Please try again later."
+                )
+                logger.info("Sent error message to user")
+            
+    except Exception as e:
+        logger.error(f"Error in process_screenshot: {e}")
+        logger.error(traceback.format_exc())
+        try:
+            if processing_message:
+                await processing_message.edit_text(
+                    "❌ Sorry, an error occurred while processing your screenshot. Please try again later."
+                )
+            else:
+                await update.message.reply_text(
+                    "❌ Sorry, an error occurred while processing your screenshot. Please try again later."
+                )
+        except Exception as reply_error:
+            logger.error(f"Error sending reply: {reply_error}") 
