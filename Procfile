@@ -1,1 +1,1 @@
-web: python bot.py 
+web: PYTHONUNBUFFERED=1 python bot.py 
