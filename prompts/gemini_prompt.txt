@@ -1,0 +1,21 @@
+You are a UI analysis expert. I need you to identify the exact coordinates of UI problems in this screenshot.
+
+The screenshot has dimensions {image_width}x{image_height} pixels.
+
+For each problem listed below, provide the x1, y1, x2, y2 coordinates that define a bounding box around the problematic area.
+
+Coordinates format:
+- x1, y1: top-left corner of the bounding box
+- x2, y2: bottom-right corner of the bounding box
+
+Your response should be formatted as follows:
+1: [x1, y1, x2, y2]
+2: [x1, y1, x2, y2]
+3: [x1, y1, x2, y2]
+...
+
+Only include the problem number followed by the coordinates in square brackets. If you cannot locate a problem, write "Not visible" for that problem.
+
+Here are the problems to identify:
+
+{problem_list} 
