@@ -186,31 +186,72 @@ async def process_screenshot(update: Update, context: ContextTypes.DEFAULT_TYPE)
         logger.info(f"Photo details: file_id={photo.file_id}, width={photo.width}, height={photo.height}")
         
         # Create a temporary directory for this user
-        temp_dir = tempfile.mkdtemp()
+        temp_dir = os.path.join(OUTPUT_DIR, "temp", f"user_{user_id}")
+        os.makedirs(temp_dir, exist_ok=True)
         logger.info(f"Created temp directory: {temp_dir}")
         
         try:
             # Download the photo
             logger.info("Starting photo download")
-            photo_file = await context.bot.get_file(photo.file_id)
-            screenshot_path = os.path.join(temp_dir, f"screenshot_{photo.file_id}.jpg")
-            await photo_file.download_to_drive(screenshot_path)
-            logger.info(f"Photo downloaded to: {screenshot_path}")
+            try:
+                photo_file = await context.bot.get_file(photo.file_id)
+                logger.info(f"Got file info: {photo_file}")
+                screenshot_path = os.path.join(temp_dir, f"screenshot_{photo.file_id}.jpg")
+                await photo_file.download_to_drive(screenshot_path)
+                logger.info(f"Photo downloaded to: {screenshot_path}")
+                
+                # Check if file exists and has content
+                if os.path.exists(screenshot_path):
+                    file_size = os.path.getsize(screenshot_path)
+                    logger.info(f"Downloaded file size: {file_size} bytes")
+                    if file_size == 0:
+                        logger.error("Downloaded file is empty")
+                        raise ValueError("Downloaded file is empty")
+                else:
+                    logger.error(f"Downloaded file doesn't exist: {screenshot_path}")
+                    raise FileNotFoundError(f"Downloaded file not found: {screenshot_path}")
+            except Exception as download_error:
+                logger.error(f"Error downloading photo: {download_error}")
+                logger.error(traceback.format_exc())
+                if processing_message:
+                    await processing_message.edit_text(
+                        "❌ Error downloading your image. Please try again."
+                    )
+                return
             
             # Store the screenshot path in user context
             if user_id not in user_context:
                 user_context[user_id] = {}
             user_context[user_id]['screenshot_path'] = screenshot_path
             
-            # Update processing message
-            await processing_message.edit_text(
-                "🔎 Analyzing your interface for complexity issues and usability problems..."
-            )
-            logger.info("Processing message updated for analysis")
-            
-            # Start analysis in a separate task to prevent blocking
-            asyncio.create_task(perform_analysis(update, context, screenshot_path, processing_message))
-            logger.info("Analysis task created")
+            # Прямой вызов анализа, минуя асинхронный запуск
+            logger.info("Starting direct analysis of the screenshot")
+            try:
+                # Создаем анализатор UI
+                from analyze_ui import UIAnalyzer
+                analyzer = UIAnalyzer(output_dir=OUTPUT_DIR)
+                logger.info(f"Created analyzer with output_dir={OUTPUT_DIR}")
+                
+                # Запускаем анализ
+                results = await analyzer.analyze_screenshot(screenshot_path)
+                logger.info("Analysis completed successfully")
+                
+                # Сохраняем результаты
+                user_context[user_id]['analysis_results'] = results
+                
+                # Отправляем результаты
+                await processing_message.edit_text("✅ Analysis complete! Preparing your results...")
+                await send_initial_results(update, context, results)
+                logger.info("Results sent to the user")
+                
+            except Exception as analyze_error:
+                logger.error(f"Error in direct analysis: {analyze_error}")
+                logger.error(traceback.format_exc())
+                if processing_message:
+                    await processing_message.edit_text(
+                        f"❌ Analysis failed: {str(analyze_error)[:100]}... Please try again later."
+                    )
+                return
             
         except Exception as e:
             logger.error(f"Error processing screenshot: {e}")
@@ -646,6 +687,24 @@ async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
             "❌ Sorry, an error occurred. Please try again later."
         )
 
+async def debug_message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Debug handler for all message types to see what's coming in."""
+    logger.info(f"DEBUG: Received update type: {update.effective_message.chat}")
+    logger.info(f"DEBUG: Update content: {update}")
+    logger.info(f"DEBUG: Message type: {update.message and type(update.message)}")
+    
+    if update.message and update.message.photo:
+        logger.info(f"DEBUG: Received photo message! Photo array length: {len(update.message.photo)}")
+        await process_screenshot(update, context)
+    elif update.message and update.message.text:
+        logger.info(f"DEBUG: Received text message: {update.message.text[:20]}...")
+    else:
+        logger.info("DEBUG: Received other message type")
+        if update.message:
+            for attr in dir(update.message):
+                if not attr.startswith('_') and not callable(getattr(update.message, attr)):
+                    logger.info(f"DEBUG: update.message.{attr} = {getattr(update.message, attr)}")
+
 def main() -> None:
     """Start the bot."""
     logger.info("Starting UI Complexity Analyzer Bot")
@@ -661,12 +720,16 @@ def main() -> None:
         application.add_handler(CommandHandler("about", about_command))
         application.add_handler(CommandHandler("test", test_analyze))  # Add test command
         
-        # Add photo handler
-        application.add_handler(MessageHandler(filters.PHOTO, process_screenshot))
-        logger.info("Added photo handler")
+        # Add photo handler with higher priority
+        application.add_handler(MessageHandler(filters.PHOTO, process_screenshot, block=False), group=1)
+        logger.info("Added photo handler with priority 1")
+        
+        # Add debug handler with lower priority to catch all messages
+        application.add_handler(MessageHandler(filters.ALL, debug_message_handler, block=False), group=2)
+        logger.info("Added debug handler with priority 2")
         
         # Add text message handler
-        application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_message_handler))
+        application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_message_handler), group=3)
         
         # Add callback query handler
         application.add_handler(CallbackQueryHandler(button_callback))
