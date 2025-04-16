@@ -30,7 +30,8 @@ logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     handlers=[
-        logging.StreamHandler()
+        logging.StreamHandler(sys.stdout),
+        logging.FileHandler("analyze_ui.log")
     ]
 )
 logger = logging.getLogger(__name__)
@@ -56,10 +57,12 @@ class UIAnalyzer:
     
     def __init__(self, output_dir: str = "./output"):
         """Initialize UIAnalyzer with output directory."""
+        logger.info(f"Initializing UIAnalyzer with output_dir: {output_dir}")
         self.output_dir = output_dir
         
         # Create output directory if it doesn't exist
         os.makedirs(output_dir, exist_ok=True)
+        logger.info(f"Output directory existence check: {os.path.exists(output_dir)}")
         
         # Subdirectories for organized output
         self.images_dir = os.path.join(output_dir, "images")
@@ -70,10 +73,17 @@ class UIAnalyzer:
         os.makedirs(self.images_dir, exist_ok=True)
         os.makedirs(self.reports_dir, exist_ok=True)
         os.makedirs(self.data_dir, exist_ok=True)
+        logger.info(f"Subdirectories created: images={os.path.exists(self.images_dir)}, reports={os.path.exists(self.reports_dir)}, data={os.path.exists(self.data_dir)}")
         
         # Load prompt templates
-        self.gpt_prompt_template = self._load_prompt_template("gpt_prompt.txt")
-        self.gemini_prompt_template = self._load_prompt_template("gemini_prompt.txt")
+        try:
+            self.gpt_prompt_template = self._load_prompt_template("gpt_prompt.txt")
+            self.gemini_prompt_template = self._load_prompt_template("gemini_prompt.txt")
+            logger.info("Prompt templates loaded successfully")
+        except Exception as e:
+            logger.error(f"Error loading prompt templates: {e}")
+            logger.error(traceback.format_exc())
+            raise
     
     def _load_prompt_template(self, filename: str) -> str:
         """Load a prompt template from file."""
@@ -103,7 +113,17 @@ class UIAnalyzer:
         Returns:
             Dictionary containing analysis results
         """
-        logger.info(f"Starting analysis of screenshot: {screenshot_path}")
+        logger.info(f"Starting UI screenshot analysis for {screenshot_path}")
+        logger.info(f"User context: {user_context}")
+        
+        # Проверяем существование файла
+        if not os.path.exists(screenshot_path):
+            logger.error(f"Screenshot file does not exist: {screenshot_path}")
+            raise FileNotFoundError(f"Screenshot file not found: {screenshot_path}")
+        
+        # Проверяем размер файла
+        file_size = os.path.getsize(screenshot_path)
+        logger.info(f"Screenshot file size: {file_size} bytes")
         
         # Generate unique ID for this analysis
         analysis_id = f"analysis_{int(time.time())}"
@@ -202,15 +222,42 @@ class UIAnalyzer:
         Returns:
             Dictionary containing analysis results
         """
+        logger.info(f"Running GPT-4 analysis on {image_path}")
+        
         try:
+            # Проверяем API ключ
+            OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+            if not OPENAI_API_KEY:
+                logger.error("OPENAI_API_KEY not found in environment variables")
+                raise ValueError("OPENAI_API_KEY is required")
+                
+            # Проверяем существование файла изображения
+            if not os.path.exists(image_path):
+                logger.error(f"Image file does not exist: {image_path}")
+                raise FileNotFoundError(f"Image file not found: {image_path}")
+                
+            # Проверяем размер файла изображения
+            file_size = os.path.getsize(image_path)
+            logger.info(f"Image file size: {file_size} bytes")
+            
+            # Проверяем валидность изображения
+            try:
+                Image.open(image_path).verify()
+                logger.info("Image file is valid")
+            except Exception as img_error:
+                logger.error(f"Invalid image file: {img_error}")
+                raise ValueError(f"Invalid image file: {img_error}")
+            
             # Read and encode image
             with open(image_path, "rb") as image_file:
                 image_data = base64.b64encode(image_file.read()).decode("utf-8")
+            logger.info(f"Image encoded to base64, length: {len(image_data)}")
             
             # Prepare prompt
             prompt = self.gpt_prompt_template
             if user_context:
                 prompt += f"\n\nAdditional context: {user_context}"
+            logger.info(f"Prompt prepared, length: {len(prompt)}")
             
             # Prepare request
             payload = {
@@ -239,21 +286,26 @@ class UIAnalyzer:
                 "Authorization": f"Bearer {OPENAI_API_KEY}"
             }
             
+            logger.info("Sending request to OpenAI API")
             async with aiohttp.ClientSession() as session:
                 async with session.post(
                     "https://api.openai.com/v1/chat/completions",
                     headers=headers,
                     json=payload
                 ) as response:
+                    logger.info(f"OpenAI API response status: {response.status}")
                     response_data = await response.json()
                     
                     if response.status != 200:
                         error_msg = response_data.get("error", {}).get("message", "Unknown error")
-                        logger.error(f"GPT API error: {error_msg}")
-                        raise Exception(f"GPT API error: {error_msg}")
+                        logger.error(f"OpenAI API error: {error_msg}")
+                        logger.error(f"Full error response: {response_data}")
+                        raise Exception(f"OpenAI API error: {error_msg}")
                     
                     # Extract the response content
+                    logger.info("Processing OpenAI API response")
                     response_message = response_data["choices"][0]["message"]["content"]
+                    logger.info(f"Response length: {len(response_message)}")
                     
                     # Parse the JSON response
                     try:
@@ -263,17 +315,28 @@ class UIAnalyzer:
                         if start_index >= 0 and end_index > start_index:
                             json_str = response_message[start_index:end_index+1]
                             analysis_results = json.loads(json_str)
+                            logger.info(f"Successfully parsed JSON from response with {len(json_str)} characters")
                         else:
                             logger.warning("JSON not found in GPT response. Using full response.")
+                            logger.debug(f"Response: {response_message}")
                             analysis_results = {"rawResponse": response_message}
-                    except json.JSONDecodeError:
-                        logger.warning("Failed to parse JSON from GPT response. Using full response.")
+                    except json.JSONDecodeError as json_error:
+                        logger.warning(f"Failed to parse JSON from GPT response: {json_error}")
+                        logger.debug(f"Response: {response_message}")
                         analysis_results = {"rawResponse": response_message}
                     
                     # Save to file if output path is provided
                     if output_path:
-                        with open(output_path, "w", encoding="utf-8") as f:
-                            json.dump(analysis_results, f, indent=2)
+                        try:
+                            output_dir = os.path.dirname(output_path)
+                            if output_dir:
+                                os.makedirs(output_dir, exist_ok=True)
+                                
+                            with open(output_path, "w", encoding="utf-8") as f:
+                                json.dump(analysis_results, f, indent=2)
+                            logger.info(f"Analysis results saved to: {output_path}")
+                        except Exception as save_error:
+                            logger.error(f"Error saving analysis results: {save_error}")
                     
                     return analysis_results
                     
@@ -299,14 +362,29 @@ class UIAnalyzer:
         Returns:
             Dictionary containing coordinates data
         """
+        logger.info(f"Extracting coordinates with Gemini for {image_path}")
+        
         try:
+            # Проверяем API ключ
+            GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+            if not GEMINI_API_KEY:
+                logger.error("GEMINI_API_KEY not found in environment variables")
+                raise ValueError("GEMINI_API_KEY is required")
+            
+            # Проверяем существование файла изображения
+            if not os.path.exists(image_path):
+                logger.error(f"Image file does not exist: {image_path}")
+                raise FileNotFoundError(f"Image file not found: {image_path}")
+            
             # Read and encode image
             with open(image_path, "rb") as image_file:
                 image_data = base64.b64encode(image_file.read()).decode("utf-8")
+            logger.info(f"Image encoded to base64, length: {len(image_data)}")
             
             # Get image dimensions
             with Image.open(image_path) as img:
                 width, height = img.size
+            logger.info(f"Image dimensions: {width}x{height}")
             
             # Extract problems from GPT analysis
             problems = gpt_analysis.get("problems", [])
@@ -314,11 +392,14 @@ class UIAnalyzer:
                 logger.warning("No problems found in GPT analysis")
                 return {"coordinates": []}
             
+            logger.info(f"Found {len(problems)} problems in GPT analysis")
+            
             # Sort problems by severity
             problems.sort(key=lambda x: x.get("severity", 0), reverse=True)
             
             # Take top 30 problems
             top_problems = problems[:30]
+            logger.info(f"Selected top {len(top_problems)} problems for coordinate extraction")
             
             # Prepare problem descriptions for Gemini
             problem_descriptions = []
@@ -338,8 +419,9 @@ class UIAnalyzer:
                 image_height=height,
                 problem_list="\n".join(problem_descriptions)
             )
+            logger.info(f"Prompt prepared, length: {len(prompt)}")
             
-            # Prepare request
+            # Prepare request for Gemini
             payload = {
                 "contents": [
                     {
@@ -360,26 +442,32 @@ class UIAnalyzer:
                 }
             }
             
-            # Make API call
+            # Make API call to Gemini
             headers = {
                 "Content-Type": "application/json"
             }
             
+            logger.info("Sending request to Gemini API")
             async with aiohttp.ClientSession() as session:
                 async with session.post(
                     f"https://generativelanguage.googleapis.com/v1beta/models/gemini-pro-vision:generateContent?key={GEMINI_API_KEY}",
                     headers=headers,
                     json=payload
                 ) as response:
+                    logger.info(f"Gemini API response status: {response.status}")
                     response_data = await response.json()
                     
                     if response.status != 200:
                         error_msg = response_data.get("error", {}).get("message", "Unknown error")
                         logger.error(f"Gemini API error: {error_msg}")
+                        logger.error(f"Full error response: {response_data}")
                         raise Exception(f"Gemini API error: {error_msg}")
                     
                     # Extract the response content
+                    logger.info("Processing Gemini API response")
                     response_text = response_data.get("candidates", [{}])[0].get("content", {}).get("parts", [{}])[0].get("text", "")
+                    logger.info(f"Response text length: {len(response_text)}")
+                    logger.debug(f"Response text: {response_text}")
                     
                     # Parse coordinates from the response
                     coordinates = []
@@ -424,6 +512,8 @@ class UIAnalyzer:
                             except Exception as e:
                                 logger.warning(f"Error parsing coordinate line '{line}': {e}")
                     
+                    logger.info(f"Extracted {len(coordinates)} coordinates from response")
+                    
                     # Create results dictionary
                     coordinates_data = {
                         "image_dimensions": {"width": width, "height": height},
@@ -432,8 +522,16 @@ class UIAnalyzer:
                     
                     # Save to file if output path is provided
                     if output_path:
-                        with open(output_path, "w", encoding="utf-8") as f:
-                            json.dump(coordinates_data, f, indent=2)
+                        try:
+                            output_dir = os.path.dirname(output_path)
+                            if output_dir:
+                                os.makedirs(output_dir, exist_ok=True)
+                                
+                            with open(output_path, "w", encoding="utf-8") as f:
+                                json.dump(coordinates_data, f, indent=2)
+                            logger.info(f"Coordinates data saved to: {output_path}")
+                        except Exception as save_error:
+                            logger.error(f"Error saving coordinates data: {save_error}")
                     
                     return coordinates_data
                     
@@ -749,8 +847,28 @@ async def analyze_screenshot(screenshot_path: str, user_context: Optional[str] =
     Returns:
         Dictionary containing analysis results
     """
+    logger.info(f"Starting UI screenshot analysis for {screenshot_path}")
+    logger.info(f"User context: {user_context}")
+    
+    # Проверяем существование файла
+    if not os.path.exists(screenshot_path):
+        logger.error(f"Screenshot file does not exist: {screenshot_path}")
+        raise FileNotFoundError(f"Screenshot file not found: {screenshot_path}")
+    
+    # Проверяем размер файла
+    file_size = os.path.getsize(screenshot_path)
+    logger.info(f"Screenshot file size: {file_size} bytes")
+    
     analyzer = UIAnalyzer()
-    return await analyzer.analyze_screenshot(screenshot_path, user_context)
+    
+    try:
+        results = await analyzer.analyze_screenshot(screenshot_path, user_context)
+        logger.info(f"Analysis completed successfully with overall score: {results.get('overall_score')}")
+        return results
+    except Exception as e:
+        logger.error(f"Error in analyze_screenshot: {e}")
+        logger.error(traceback.format_exc())
+        raise
 
 # For testing
 if __name__ == "__main__":
