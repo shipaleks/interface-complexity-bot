@@ -18,17 +18,29 @@ You need to set the following environment variables:
 | `TELEGRAM_TOKEN` | Your Telegram bot token from BotFather |
 | `OPENAI_API_KEY` | Your OpenAI API key |
 | `FIREBASE_CRED_PATH` | (Optional) Path to Firebase credentials file for usage stats |
-| `RAILWAY_STATIC_URL` | The URL of your Railway deployment (set automatically by Railway) |
+| `WEBHOOK_MODE` | Set to `true` to force webhook mode (recommended for production) |
+| `WEBHOOK_URL` | (Optional) Complete URL for the webhook (e.g., https://yourdomain.com/telegram_token) |
 | `PORT` | Port for the webhook server (defaults to 8443) |
 
 ## Deployment on Railway
 
 1. Fork or clone this repository
 2. Connect your GitHub repo to Railway
-3. Add the required environment variables in Railway's dashboard
+3. Add the required environment variables in Railway's dashboard:
+   - `TELEGRAM_TOKEN`: Your Telegram bot token
+   - `OPENAI_API_KEY`: Your OpenAI API key
+   - `WEBHOOK_MODE`: Set to `true`
 4. Deploy!
 
-The bot will automatically detect it's running on Railway and will use webhooks instead of polling.
+The bot will use webhooks in production (when `WEBHOOK_MODE` is true) and polling in development.
+
+## Avoiding Multiple Instances
+
+If you see the error `Conflict: terminated by other getUpdates request`, it means multiple instances of your bot are running. To fix this:
+
+1. Make sure `WEBHOOK_MODE` is set to `true` in your Railway environment
+2. Check that only one service is running
+3. Restart the service if needed
 
 ## Local Development
 
@@ -39,4 +51,4 @@ To run the bot locally:
 3. Install dependencies: `pip install -r requirements.txt`
 4. Run the bot: `python bot.py`
 
-In local development mode, the bot will use polling instead of webhooks. 
+In local development mode, the bot will use polling by default. 
