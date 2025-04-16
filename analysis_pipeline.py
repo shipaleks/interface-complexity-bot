@@ -51,7 +51,6 @@ async def run_analysis_pipeline(
         success, output = await run_gpt_analysis(
             screenshot_path=screenshot_path,
             output_json_path=gpt_analysis_path,
-            output_tex_path=tex_report_path,
             output_pdf_path=pdf_report_path,
             output_heatmap_path=heatmap_path,
             context=context,
@@ -113,7 +112,6 @@ async def run_analysis_pipeline(
 async def run_gpt_analysis(
     screenshot_path: str,
     output_json_path: str,
-    output_tex_path: str,
     output_pdf_path: str,
     output_heatmap_path: str,
     context: Optional[str] = None,
@@ -125,8 +123,7 @@ async def run_gpt_analysis(
     Args:
         screenshot_path: Path to the screenshot image
         output_json_path: Path to save GPT analysis JSON
-        output_tex_path: Path to save LaTeX report
-        output_pdf_path: Expected path of the generated PDF (ignored in call, used for check)
+        output_pdf_path: Expected path of the generated PDF (used for check)
         output_heatmap_path: Path to save heatmap image
         context: Optional description of what's in the screenshot
         userflows: Optional description of user flows
@@ -135,17 +132,15 @@ async def run_gpt_analysis(
         Tuple of (success, output/error message)
     """
     try:
-        # Based on the error "the following arguments are required: --input/-i",
-        # we try passing the image path as the --input argument as well.
-        # Also correcting the --pdf flag usage.
+        # Removed --tex argument as it's not recognized by generate_report_v2.py
+        # Passing screenshot as --input based on previous error.
         cmd = [
             "python", "generate_report_v2.py",
             "--input", screenshot_path,
             "--image", screenshot_path,
             "--output", output_json_path,
-            "--tex", output_tex_path,
             "--heatmap", output_heatmap_path,
-            "--pdf"  # Correct usage: Flag to generate PDF
+            "--pdf"  # Flag to generate PDF
         ]
         
         # Add optional arguments if provided
