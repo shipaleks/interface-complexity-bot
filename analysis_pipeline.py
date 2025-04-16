@@ -126,7 +126,7 @@ async def run_gpt_analysis(
         screenshot_path: Path to the screenshot image
         output_json_path: Path to save GPT analysis JSON
         output_tex_path: Path to save LaTeX report
-        output_pdf_path: Path to save PDF report
+        output_pdf_path: Expected path of the generated PDF (ignored in call, used for check)
         output_heatmap_path: Path to save heatmap image
         context: Optional description of what's in the screenshot
         userflows: Optional description of user flows
@@ -135,14 +135,17 @@ async def run_gpt_analysis(
         Tuple of (success, output/error message)
     """
     try:
+        # Based on the error "the following arguments are required: --input/-i",
+        # we try passing the image path as the --input argument as well.
+        # Also correcting the --pdf flag usage.
         cmd = [
             "python", "generate_report_v2.py",
+            "--input", screenshot_path,
             "--image", screenshot_path,
             "--output", output_json_path,
             "--tex", output_tex_path,
-            "--pdf", output_pdf_path,
             "--heatmap", output_heatmap_path,
-            "--pdf"  # Flag to generate PDF
+            "--pdf"  # Correct usage: Flag to generate PDF
         ]
         
         # Add optional arguments if provided
