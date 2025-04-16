@@ -340,10 +340,30 @@ async def test_analyze(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         try:
             import google.generativeai as genai
             genai.configure(api_key=GEMINI_API_KEY)
-            models = genai.list_models()
-            await update.message.reply_text(f"Gemini connection successful. Available models: {len(models)}")
+            
+            # Исправление ошибки с генератором - конвертируем в список
+            try:
+                models = list(genai.list_models())
+                await update.message.reply_text(f"Gemini connection successful. Available models: {len(models)}")
+            except Exception as list_error:
+                # Альтернативный подход, если list() не работает
+                models_count = 0
+                for _ in genai.list_models():
+                    models_count += 1
+                await update.message.reply_text(f"Gemini connection successful. Available models: {models_count}")
         except Exception as e:
             await update.message.reply_text(f"Gemini connection failed: {str(e)}")
+        
+        # Проверка файловой системы
+        try:
+            # Проверяем доступ к файловой системе
+            test_file_path = os.path.join(test_output_dir, "test_write.txt")
+            with open(test_file_path, "w") as f:
+                f.write("Test write access")
+            file_size = os.path.getsize(test_file_path)
+            await update.message.reply_text(f"File system test: Success. Wrote {file_size} bytes to {test_file_path}")
+        except Exception as fs_error:
+            await update.message.reply_text(f"File system test failed: {str(fs_error)}")
         
         await update.message.reply_text("Tests completed")
         
