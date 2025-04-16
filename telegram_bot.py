@@ -12,7 +12,7 @@ import json
 import logging
 import asyncio
 from datetime import datetime
-from aiogram import Bot, Dispatcher, Router, types
+from aiogram import Bot, Dispatcher, Router, types, F
 from aiogram.types import Message, FSInputFile
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
@@ -96,7 +96,7 @@ async def cmd_cancel(message: Message, state: FSMContext):
     await message.answer("Анализ отменен. Отправьте скриншот, чтобы начать снова.")
 
 # Message handlers
-@router.message(lambda message: message.photo)
+@router.message(F.photo)
 async def handle_photo(message: Message, state: FSMContext):
     """Handle incoming photos (screenshots)."""
     # Add debug logging
@@ -473,6 +473,85 @@ def format_recommendations(recommendations_path):
         logger.error(f"Error formatting recommendations: {e}", exc_info=True)
         return [f"Ошибка при форматировании рекомендаций: {str(e)}"]
 
+# Handler for documents (image files sent as documents)
+@router.message(F.document)
+async def handle_document(message: Message, state: FSMContext):
+    """Handle documents (possibly images) sent by user."""
+    logger.info(f"Received document from user {message.from_user.id}")
+    
+    try:
+        # Check if we're already in a state
+        current_state = await state.get_state()
+        logger.info(f"Current state for document: {current_state}")
+        
+        if current_state and current_state != "AnalysisStates:waiting_for_screenshot":
+            await message.answer("У вас уже идет процесс анализа. Используйте /cancel для отмены.")
+            return
+            
+        document = message.document
+        logger.info(f"Document file_id: {document.file_id}, file_name: {document.file_name}")
+        
+        # Check if the document is an image
+        if not document.file_name.lower().endswith(('.png', '.jpg', '.jpeg', '.bmp', '.webp')):
+            await message.answer("Пожалуйста, отправьте изображение в формате PNG, JPG или другом графическом формате.")
+            return
+            
+        # Generate unique filename using user ID and timestamp
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        user_id = message.from_user.id
+        file_id = f"{user_id}_{timestamp}"
+        
+        # Path to save the screenshot
+        screenshot_path = f"temp/{file_id}_input.png"
+        logger.info(f"Saving document to: {screenshot_path}")
+        
+        # Ensure temp directory exists
+        os.makedirs("temp", exist_ok=True)
+        
+        # Download the document
+        await message.answer("Получил скриншот! Сохраняю...")
+        file_info = await bot.get_file(document.file_id)
+        logger.info(f"Got file info for document: {file_info.file_path}")
+        
+        await bot.download_file(file_info.file_path, screenshot_path)
+        logger.info(f"Document saved to: {screenshot_path}")
+        
+        # Save file path and info in FSM storage
+        await state.update_data(
+            screenshot_path=screenshot_path,
+            file_id=file_id,
+            timestamp=timestamp
+        )
+        logger.info(f"State data updated with document path and file_id")
+        
+        # Move to the next state and ask for context
+        await state.set_state(AnalysisStates.waiting_for_context)
+        logger.info(f"State set to: AnalysisStates.waiting_for_context")
+        
+        await message.answer(
+            "Что изображено на скриншоте? (опишите кратко или введите 'пропустить')"
+        )
+        logger.info(f"Sent prompt for context to user")
+    except Exception as e:
+        logger.error(f"Error in handle_document: {e}", exc_info=True)
+        await message.answer(f"Произошла ошибка при обработке файла: {str(e)}")
+        # Clear state on error
+        await state.clear()
+
+# Fallback handler for text messages not handled by other handlers
+@router.message(F.text)
+async def handle_text(message: Message, state: FSMContext):
+    """Handle text messages that are not handled by other handlers."""
+    current_state = await state.get_state()
+    logger.info(f"Received unhandled text message in state: {current_state}")
+    
+    if current_state is None:
+        await message.answer(
+            "Пожалуйста, отправьте скриншот интерфейса для анализа.\n"
+            "Используйте /help, чтобы узнать больше о возможностях бота."
+        )
+        return
+
 # Register the router
 dp.include_router(router)
 
@@ -481,6 +560,14 @@ async def main():
         # Skip pending updates
         logger.info("Starting bot, deleting previous webhook updates...")
         await bot.delete_webhook(drop_pending_updates=True)
+        
+        # Register all states
+        logger.info("Registering FSM states...")
+        AnalysisStates.waiting_for_screenshot.update(AnalysisStates)
+        AnalysisStates.waiting_for_context.update(AnalysisStates)
+        AnalysisStates.waiting_for_userflows.update(AnalysisStates)
+        AnalysisStates.analyzing.update(AnalysisStates)
+        logger.info("FSM states registered")
         
         # Start polling
         logger.info("Starting polling...")
