@@ -27,8 +27,8 @@ logger = logging.getLogger(__name__)
 # Get environment variables
 TELEGRAM_BOT_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
 if not TELEGRAM_BOT_TOKEN:
-    logger.error("TELEGRAM_BOT_TOKEN is not set in the .env file")
-    exit(1)
+    logger.error("TELEGRAM_BOT_TOKEN is not set in the environment variables")
+    raise ValueError("TELEGRAM_BOT_TOKEN is required")
 
 # Create output directory for analysis results
 OUTPUT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "output")
@@ -428,7 +428,18 @@ def main() -> None:
     application.add_error_handler(error_handler)
 
     # Start the Bot
-    application.run_polling()
+    if 'RAILWAY_STATIC_URL' in os.environ:
+        # Railway deployment with webhook
+        application.run_webhook(
+            listen="0.0.0.0",
+            port=int(os.environ.get('PORT', 5000)),
+            url_path=TELEGRAM_BOT_TOKEN,
+            webhook_url=os.environ.get('RAILWAY_STATIC_URL', '') + TELEGRAM_BOT_TOKEN
+        )
+    else:
+        # Local deployment with polling
+        application.run_polling(allowed_updates=Update.ALL_TYPES)
+    
     logger.info("Bot started")
 
 if __name__ == '__main__':

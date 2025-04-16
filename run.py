@@ -27,7 +27,10 @@ def check_environment():
     if missing_vars:
         logger.error(f"Missing required environment variables: {', '.join(missing_vars)}")
         logger.error("Please set them in .env file or environment")
-        return False
+        
+        # For Railway deployment, we want to log but not exit
+        if 'RAILWAY_ENVIRONMENT' not in os.environ:
+            return False
     
     return True
 
@@ -37,7 +40,9 @@ def create_required_directories():
         'output',
         'output/images',
         'output/reports',
-        'output/data'
+        'output/data',
+        'prompts',
+        'temp_files'
     ]
     
     for directory in dirs:
@@ -47,6 +52,8 @@ def create_required_directories():
 def main():
     """Main function to run the bot."""
     try:
+        logger.info("Starting UI Complexity Analyzer Bot")
+        
         # Check environment variables
         if not check_environment():
             return 1
@@ -58,7 +65,6 @@ def main():
         from bot import main as run_bot
         
         # Run the bot
-        logger.info("Starting UI Complexity Analyzer Bot")
         run_bot()
         
         return 0
