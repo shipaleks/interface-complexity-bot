@@ -2,7 +2,7 @@
 FROM python:3.11-slim
 WORKDIR /app
 
-# Install system dependencies including LaTeX
+# Install system dependencies including LaTeX and other required packages
 RUN apt-get update && apt-get install -y \
     texlive-latex-base \
     texlive-fonts-recommended \
@@ -11,6 +11,7 @@ RUN apt-get update && apt-get install -y \
     git \
     build-essential \
     libmagic1 \
+    libmagickwand-dev \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
@@ -28,6 +29,9 @@ COPY . .
 RUN chmod +x start.sh
 
 # Environment variables will be provided by Railway
+
+# Set PORT environment variable for Railway (if not set)
+ENV PORT=5000
 
 # Command to run the bot
 CMD ["python", "run.py"]
