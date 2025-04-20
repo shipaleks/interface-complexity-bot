@@ -19,6 +19,7 @@ import base64
 import io
 import tempfile
 from urllib.parse import urlparse
+import sys
 
 def load_analysis_data(json_file_path):
     """Load analysis data from a JSON file."""
@@ -284,20 +285,23 @@ def generate_key_findings(data):
                 back_color = "orange!5"
             
             findings_text += f"""
-\\begin{{tcolorbox}}[colback={back_color}, colframe={box_color}, title=Проблема {i+1}: {sanitize_latex(category)} — {sanitize_latex(subcategory)}, fonttitle=\\bfseries]
+\\noindent\\fcolorbox{{{box_color}}}{{{back_color}}}{{\\begin{{minipage}}{{\\linewidth}}
+\\textbf{{Проблема {i+1}: {sanitize_latex(category)} — {sanitize_latex(subcategory)}}}\\\\
 \\begin{{itemize}}
 \\item \\textbf{{Описание:}} {sanitize_latex(description)}
 \\item \\textbf{{Критичность:}} {severity}/100 
 \\item \\textbf{{Научное обоснование:}} {sanitize_latex(reasoning)}
 \\end{{itemize}}
-\\end{{tcolorbox}}\n"""
+\\end{{minipage}}}}\n\\vspace{{0.5cm}}\n"""
     
     section = f"""
 \\section{{Ключевые выводы}}
 
-\\begin{{tcolorbox}}[colback=white, colframe=black!50, title=Наиболее критичные проблемы (80+ баллов), fonttitle=\\bfseries] % Neutral block, updated title
+\\noindent\\fcolorbox{{black!50}}{{white}}{{\\begin{{minipage}}{{\\linewidth}}
+\\textbf{{Наиболее критичные проблемы (80+ баллов)}}\\\\
 В ходе анализа выявлены следующие критические проблемы, требующие первоочередного внимания (при наличии):
-\\end{{tcolorbox}}
+\\end{{minipage}}}}
+\\vspace{{0.5cm}}
 
 {findings_text}
 
@@ -367,7 +371,7 @@ def generate_category_scores(data):
         elif score >= 40: cell_color = "yellow!30"
         else: cell_color = "green!15"
             
-        table_rows += f"{sanitize_latex(label)} & \\cellcolor{{{cell_color}}}{score:.0f} \\\\" # Removed trailing \n
+        table_rows += f"{sanitize_latex(label)} & \\cellcolor{{{cell_color}}}{score:.0f} \\\\\n"
     
     section = f"""
 \\section{{Оценки по категориям}}
@@ -417,7 +421,7 @@ def generate_category_scores(data):
 \\begin{{tabular}}{{|l|c|}}
 \\hline
 \\rowcolor{{gray!15}}
-\\textbf{{Категория}} & \\textbf{{Оценка (1-100)}} \\\\\\\\ % Updated scale text
+\\textbf{{Категория}} & \\textbf{{Оценка (1-100)}} \\\\
 \\hline
 {table_rows}
 \\hline
@@ -466,7 +470,7 @@ def generate_component_table(data):
             category_score = category_data.get("score", 0)
             components_data = category_data.get("components", {})
             
-            content += f"\\rowcolor{{gray!10}}\\multicolumn{{2}}{{|l|}}{{\\textbf{{{sanitize_latex(category_name)}}}}} \\\\ \\hline\n"
+            content += f"\\multicolumn{{2}}{{|l|}}{{\\cellcolor{{gray!10}}\\textbf{{{sanitize_latex(category_name)}}}}} \\\\ \\hline\n"
             content += f"\\textbf{{Общая оценка}} & {category_score:.0f} \\\\ \\hline\n" # Display as integer
 
             for component in components:
@@ -500,7 +504,7 @@ def generate_component_table(data):
 \\textbf{{Компонент}} & \\textbf{{Оценка (1-100)}} \\\\ \\hline
 {right_content}
 \\end{{tabular}}
-\\caption{{Детальные оценки всех компонентов интерфейса (1-100)}} % Updated caption
+\\caption{{Детальные оценки всех компонентов интерфейса (1-100)}}
 \\end{{table}}
 
 Таблица представляет подробную разбивку оценок (1-100) по всем компонентам.
@@ -825,32 +829,53 @@ def generate_latex_document(data):
     latex_path = "" 
     
     latex_document = f"""
-\\documentclass[a4paper,12pt,openany]{{article}}
-\\usepackage[utf8]{{inputenc}}
+\\documentclass[10pt, a4paper]{{article}}
 \\usepackage[T2A]{{fontenc}}
+\\usepackage[utf8]{{inputenc}}
 \\usepackage[russian]{{babel}}
-\\usepackage{{amsmath,amssymb,amsfonts}}
-\\usepackage{{graphicx}}
+\\usepackage{{cmap}}
 \\usepackage{{geometry}}
-\\usepackage{{tikz}}
-\\usepackage{{multirow}}
-\\usepackage{{booktabs}}
-\\usepackage{{xcolor}}
+\\usepackage{{graphicx}}
+\\usepackage[dvipsnames,svgnames]{{xcolor}}
 \\usepackage{{hyperref}}
-\\usepackage{{fancyhdr}}
-\\usepackage{{float}}
+\\usepackage{{tikz}}
 \\usepackage{{tcolorbox}}
-\\usepackage{{colortbl}}
+\\usepackage{{float}}  % Added for better figure placement with [H]
+
+% Special configuration for better PDF Cyrillic support
+\\pdfmapfile{{+/usr/local/texlive/2023/texmf-dist/fonts/map/dvips/cm-super/cm-super-t2a.map}}
+\\pdfminorversion=7
+
+% Define a simple colorbox replacement since tcolorbox may not be available
+\\newcommand{{\\simplecolorbox}}[3]{{
+    \\begin{{center}}
+    \\fcolorbox{{#2}}{{#1}}{{\\begin{{minipage}}{{0.95\\textwidth}}
+        \\textbf{{#3}}\\\\
+        \\vspace{{0.2cm}}
+    \\end{{minipage}}}}
+    \\end{{center}}
+}}
+\\newenvironment{{tcolorbox}}[1][]{{
+    \\begin{{center}}
+    \\def\\tcbcol{{blue!5}}
+    \\def\\tcbframe{{blue!40}}
+    \\def\\tcbtitle{{}}
+    \\begin{{minipage}}{{0.95\\textwidth}}
+    \\noindent\\fcolorbox{{\\tcbframe}}{{\\tcbcol}}{{\\begin{{minipage}}{{\\linewidth}}
+}}{{
+    \\end{{minipage}}}}
+    \\end{{minipage}}
+    \\end{{center}}
+}}
 
 \\geometry{{ a4paper, top=2.5cm, bottom=2.5cm, left=2.5cm, right=2.5cm }}
 \\hypersetup{{ colorlinks=true, linkcolor=blue, filecolor=magenta, urlcolor=cyan, 
     pdftitle={{Отчет об анализе пользовательского интерфейса}}, pdfauthor={{Visual Interface Analyzer}} }}
 
-\\pagestyle{{fancy}}
-\\fancyhf{{}}
-\\rhead{{Отчет об анализе UI}}
-\\lhead{{Visual Interface Analyzer}}
-\\cfoot{{Страница \\thepage}}
+% Fix to prevent blank pages
+\\let\\cleardoublepage\\clearpage
+
+\\pagestyle{{plain}}
 
 \\begin{{document}}
 
@@ -862,7 +887,7 @@ def generate_latex_document(data):
 \\vspace{{1.5cm}}
 \\begin{{tikzpicture}}
 \\draw[rounded corners=20pt, fill=black!5, draw=black!40, line width=1pt] (0,0) rectangle (10,4);
-\\node at (5,2) {{\\Large \\textbf{{Visual Interface Analyzer}}\\\\ \\vspace{{0.5cm}} \\normalsize Аналитический отчет}};
+\\node at (5,2) {{\\Large \\textbf{{Visual Interface Analyzer}}\\\\\\\\ \\vspace{{0.5cm}} \\normalsize Аналитический отчет}};
 \\end{{tikzpicture}}
 \\vfill
 {{\\large Дата анализа: {timestamp}\\par}}
@@ -914,6 +939,10 @@ def save_latex_to_file(content, output_path):
 def generate_pdf(latex_path):
     """Generate PDF from LaTeX using Python."""
     pdf_path = latex_path.replace(".tex", ".pdf")
+    log_path = latex_path.replace(".tex", ".log") # Define log file path
+    aux_path = latex_path.replace(".tex", ".aux") # Define aux file path
+    toc_path = latex_path.replace(".tex", ".toc") # Define toc file path
+    out_path = latex_path.replace(".tex", ".out") # Define out file path
     report_dir = os.path.dirname(latex_path)
     images_subdir = os.path.join(report_dir, "report_images")
     
@@ -931,70 +960,104 @@ def generate_pdf(latex_path):
             pdflatex_path = "/Library/TeX/texbin/pdflatex"
             print(f"Using pdflatex from /Library/TeX/texbin/")
     
+    pdf_generated_successfully = False
     if pdflatex_path:
         try:
+            final_return_code = 0
             for i in range(2):
+                print(f"Running pdflatex attempt {i+1}...")
+                # Ensure output directory exists for pdflatex
+                os.makedirs(report_dir, exist_ok=True)
                 result = subprocess.run(
-                    [pdflatex_path, "-interaction=nonstopmode", latex_path],
-                    capture_output=True, text=False, check=False
+                    [pdflatex_path,
+                     "-interaction=nonstopmode",
+                     "-output-directory", report_dir, # Ensure output goes here
+                      latex_path],
+                    capture_output=True, text=False, check=False # text=False to handle potential encoding issues in log
                 )
+                final_return_code = result.returncode # Store the code from the last run
                 if result.returncode != 0:
                     print(f"Warning: pdflatex (attempt {i+1}) returned non-zero exit code: {result.returncode}")
-                    if i == 1: 
-                        try:
-                            stderr_text = result.stderr.decode('utf-8', errors='replace')
-                            error_lines = [line for line in stderr_text.split('\n') if line.startswith('!')]
-                            if error_lines:
-                                print("Errors encountered:")
-                                for line in error_lines[:5]: print(f"  {line}")
-                                if len(error_lines) > 5: print(f"  ... and {len(error_lines) - 5} more errors")
-                        except Exception as decode_err:
-                            print(f"Could not decode error output: {decode_err}")
+                    # Don't break, try second run for references
+                else:
+                    print(f"pdflatex attempt {i+1} successful.")
             
-            if os.path.exists(pdf_path):
+            # Check final status after potentially two runs
+            if os.path.exists(pdf_path) and final_return_code == 0:
                 print(f"PDF successfully generated at {pdf_path}")
-                return True
+                pdf_generated_successfully = True
             else:
-                print(f"PDF was not generated, but no error was reported.")
+                print(f"PDF generation failed or pdflatex reported errors (last exit code: {final_return_code}).")
+                # --- Read and print last part of log file on error --- START ---
+                if os.path.exists(log_path):
+                    print(f"--- Last lines of {os.path.basename(log_path)}: ---")
+                    try:
+                        with open(log_path, 'r', encoding='utf-8', errors='ignore') as log_file:
+                            lines = log_file.readlines()
+                            # Print last ~20 lines to stderr
+                            for line in lines[-20:]:
+                                sys.stderr.write(line)
+                        sys.stderr.flush()
+                    except Exception as log_e:
+                        print(f"Error reading log file {log_path}: {log_e}", file=sys.stderr)
+                else:
+                     print(f"Log file {log_path} not found.", file=sys.stderr)
+                # --- Read and print last part of log file on error --- END ---
+
         except Exception as e:
             print(f"Error running pdflatex: {e}")
     else:
         print("pdflatex not found in system PATH or in /Library/TeX/texbin/.")
     
-    print(f"Cleaning up temporary images from {images_subdir}...")
-    if os.path.exists(images_subdir) and os.path.isdir(images_subdir):
-        for filename in os.listdir(images_subdir):
-            if filename.startswith("problem_img_") and filename.endswith(".png"):
-                file_path_to_remove = os.path.join(images_subdir, filename)
-                try:
-                    os.remove(file_path_to_remove)
-                    print(f"  Removed temporary image: {filename}")
-                except OSError as e:
-                    print(f"  Error removing temporary image {file_path_to_remove}: {e}")
-        try:
-            if os.path.exists(images_subdir) and os.path.isdir(images_subdir) and not os.listdir(images_subdir):
-                os.rmdir(images_subdir)
-                print(f"Removed empty image directory: {images_subdir}")
-            elif os.path.exists(images_subdir) and os.path.isdir(images_subdir):
-                 print(f"Image directory {images_subdir} is not empty, not removing.")
-        except OSError as e:
-            print(f"Could not remove image directory {images_subdir}: {e}")
+    # --- Cleanup Logic --- START ---
+    # Clean up aux/log/toc/out files regardless of success
+    for ext_path in [log_path, aux_path, toc_path, out_path]:
+        if os.path.exists(ext_path):
+            try:
+                os.remove(ext_path)
+                # print(f"Removed temporary file: {os.path.basename(ext_path)}")
+            except OSError as e:
+                print(f"Warning: Could not remove temporary file {ext_path}: {e}")
+                
+    # Clean up image directory if it was created and is empty
+    # Keep images if PDF generation failed for debugging
+    if pdf_generated_successfully:
+        print(f"Cleaning up temporary images from {images_subdir}...")
+        if os.path.exists(images_subdir) and os.path.isdir(images_subdir):
+            try:
+                shutil.rmtree(images_subdir) # Remove directory and its contents
+                print(f"Removed temporary image directory: {images_subdir}")
+            except OSError as e:
+                 print(f"Warning: Could not remove image directory {images_subdir}: {e}")
+    else:
+         print(f"Skipping image cleanup as PDF generation failed ({images_subdir}).")
+    # --- Cleanup Logic --- END ---
     
-    return False
+    return pdf_generated_successfully
 
 def main():
     parser = argparse.ArgumentParser(description="Generate LaTeX report from GPT analysis data")
     parser.add_argument('--input', '-i', type=str, required=True, help="Path to JSON file with GPT analysis data")
-    parser.add_argument('--output', '-o', type=str, default="ui_analysis_report.tex", help="Output path for LaTeX report file")
+    parser.add_argument('--output', '-o', type=str, default="ui_analysis_report", help="Base output path for report files (e.g., /path/to/report_base)")
     parser.add_argument('--pdf', '-p', action='store_true', help="Try to generate PDF after creating LaTeX file")
     parser.add_argument('--gemini-data', '-g', type=str, help="Path to JSON file with Gemini coordinates data")
     parser.add_argument('--image', '-img', type=str, help="Path to the analyzed image for illustrations")
-    parser.add_argument('--heatmap', type=str, help="Path to the heatmap image for report visualization", default="tests/fixtures/test_heatmap.png")
+    parser.add_argument('--heatmap', type=str, help="Path to the heatmap image for report visualization")
     args = parser.parse_args()
+
+    # --- Determine full .tex path --- START ---    
+    output_base_path = args.output
+    # Ensure the base path doesn't somehow end with .tex already
+    if output_base_path.lower().endswith('.tex'):
+        output_base_path = output_base_path[:-4]
+        
+    # Construct the explicit .tex file path
+    latex_output_path = f"{output_base_path}.tex"
+    # --- Determine full .tex path --- END ---
     
     print("--- Debug: Starting main function ---")
     print(f"  Input GPT data: {args.input}")
-    print(f"  Output file: {args.output}")
+    print(f"  Output .tex file: {latex_output_path}")
     print(f"  Generate PDF: {args.pdf}")
     print(f"  Gemini data file: {args.gemini_data}")
     print(f"  Image file: {args.image}")
@@ -1044,13 +1107,13 @@ def main():
     print("--- Debug: Proceeding to generate LaTeX document ---")
     latex_content = generate_latex_document(data)
     
-    if save_latex_to_file(latex_content, args.output):
-        print(f"Report generation complete. LaTeX file saved to {args.output}")
+    if save_latex_to_file(latex_content, latex_output_path):
+        print(f"Report generation complete. LaTeX file saved to {latex_output_path}")
         if args.pdf:
-            generate_pdf(args.output)
+            generate_pdf(latex_output_path)
         else:
-            print("To convert to PDF, run: pdflatex ui_analysis_report.tex")
-            print("Or run this script with --pdf flag: python generate_report.py --input <input_file> --output <output_file> --pdf")
+            print(f"To convert to PDF, run: pdflatex {os.path.basename(latex_output_path)}")
+            print("Or run this script with --pdf flag.")
 
 if __name__ == "__main__":
     main() 
